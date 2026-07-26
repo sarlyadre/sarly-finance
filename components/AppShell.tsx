@@ -15,7 +15,6 @@ import {
   Boxes,
   FileUp,
   HandCoins,
-  Wallet,
   Menu,
   X,
   Search,
@@ -84,14 +83,51 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
 function Brand() {
   return (
     <div className="flex items-center gap-2.5 px-2">
-      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-400 text-ink">
-        <Wallet className="h-[18px] w-[18px]" />
-      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/logo.png"
+        alt="Sarly Adre"
+        className="h-9 w-9 shrink-0 rounded-xl object-contain"
+      />
       <div className="leading-tight">
-        <p className="text-sm font-bold tracking-tight">Household</p>
+        <p className="text-sm font-bold tracking-tight">Sarly Adre</p>
         <p className="text-[11px] text-ink-muted">Finance</p>
       </div>
     </div>
+  );
+}
+
+/** User avatar: photo when set, else coloured initials. */
+function Avatar({
+  url,
+  name,
+  email,
+  className,
+}: {
+  url?: string | null;
+  name?: string | null;
+  email?: string | null;
+  className: string;
+}) {
+  if (url) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt={name || "avatar"}
+        className={cn("shrink-0 rounded-full object-cover", className)}
+      />
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-full bg-brand-400 font-bold text-ink",
+        className
+      )}
+    >
+      {initials(name, email)}
+    </span>
   );
 }
 
@@ -114,7 +150,11 @@ export function AppShell({
         <div className="mt-8 flex-1">
           <NavLinks />
         </div>
-        <UserFooter name={name} email={profile?.email} />
+        <UserFooter
+          name={name}
+          email={profile?.email}
+          avatarUrl={profile?.avatar_url}
+        />
       </aside>
 
       {/* Mobile drawer */}
@@ -137,7 +177,11 @@ export function AppShell({
             <div className="mt-8 flex-1">
               <NavLinks onNavigate={() => setDrawer(false)} />
             </div>
-            <UserFooter name={name} email={profile?.email} />
+            <UserFooter
+          name={name}
+          email={profile?.email}
+          avatarUrl={profile?.avatar_url}
+        />
           </aside>
         </div>
       )}
@@ -165,9 +209,12 @@ export function AppShell({
               <Bell className="h-[18px] w-[18px]" />
             </button>
             <div className="flex items-center gap-2.5 rounded-full bg-card py-1 pl-1 pr-3 shadow-card">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-400 text-xs font-bold text-ink">
-                {initials(profile?.full_name, profile?.email)}
-              </span>
+              <Avatar
+                url={profile?.avatar_url}
+                name={profile?.full_name}
+                email={profile?.email}
+                className="h-7 w-7 text-xs"
+              />
               <span className="hidden text-sm font-medium sm:block">
                 {name}
               </span>
@@ -186,16 +233,16 @@ export function AppShell({
 function UserFooter({
   name,
   email,
+  avatarUrl,
 }: {
   name: string;
   email?: string | null;
+  avatarUrl?: string | null;
 }) {
   return (
     <div className="mt-4 border-t border-line pt-4">
       <div className="flex items-center gap-2.5 px-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-400 text-xs font-bold text-ink">
-          {initials(name, email)}
-        </span>
+        <Avatar url={avatarUrl} name={name} email={email} className="h-8 w-8 text-xs" />
         <div className="min-w-0 flex-1 leading-tight">
           <p className="truncate text-sm font-medium">{name}</p>
           <p className="truncate text-[11px] text-ink-muted">{email}</p>

@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Finance — Household Dashboard",
+  title: "Sarly Adre · Finance",
   description:
     "Consolidated accounts, commitments, reimbursements and benefit claims.",
 };
