@@ -41,6 +41,7 @@ import {
   ArrowUpRight,
   RotateCcw,
   Plus,
+  Lock,
   X,
   Sparkles,
 } from "lucide-react";
@@ -76,6 +77,10 @@ export function StatementsView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+
+  // Encrypted-PDF password prompt.
+  const [pendingPdf, setPendingPdf] = useState<File | null>(null);
+  const [pdfPassword, setPdfPassword] = useState("");
 
   // Local copy of accounts so an inline-created account appears immediately
   // without a navigation/refetch that would drop the parsed rows.
@@ -166,6 +171,8 @@ export function StatementsView({
     setStmtDate(null);
     setEmptyStatement(false);
     setRoute(null);
+    setPendingPdf(null);
+    setPdfPassword("");
     if (fileInput.current) fileInput.current.value = "";
   }
 
@@ -222,36 +229,61 @@ export function StatementsView({
     setStep("review");
   }
 
-  async function handleFile(file: File) {
+  async function processPdf(file: File, password?: string) {
     setBusy(true);
     setError(null);
-    setFilename(file.name);
     try {
-      const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
-      if (isPdf) {
-        setSource("pdf");
-        const { extractPdfText } = await import("@/lib/parse/pdf");
-        const text = await extractPdfText(file);
-        captureBalances(text);
-        autoRouteAccount(text);
-        finishParse(fromText(text), text);
-      } else {
-        setSource("csv");
-        const text = await file.text();
-        captureBalances(text);
-        // CSVs are full of reference numbers whose digits can false-match an
-        // account — don't auto-route; prompt the user to choose the account.
-        setRoute({ status: "none" });
-        const parsed = parseCSV(text);
-        const map = detectColumns(parsed);
-        setCsvRows(parsed);
-        setColMap(map);
-        finishParse(fromCSV(parsed, map), text);
-      }
+      const { extractPdfText } = await import("@/lib/parse/pdf");
+      const text = await extractPdfText(file, password);
+      setPendingPdf(null);
+      setPdfPassword("");
+      captureBalances(text);
+      autoRouteAccount(text);
+      finishParse(fromText(text), text);
     } catch (e: any) {
-      setError(
-        `Could not read that file: ${e?.message ?? e}. For PDFs, try copying the text and pasting it instead.`
-      );
+      if (e?.code === "PDF_PASSWORD") {
+        setPendingPdf(file);
+        setError(
+          e.reason === "wrong"
+            ? "That password didn't work — check it and try again."
+            : null
+        );
+      } else {
+        setError(
+          `Could not read that file: ${e?.message ?? e}. For PDFs, try copying the text and pasting it instead.`
+        );
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleFile(file: File) {
+    setFilename(file.name);
+    setPendingPdf(null);
+    setPdfPassword("");
+    const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+    if (isPdf) {
+      setSource("pdf");
+      await processPdf(file);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      setSource("csv");
+      const text = await file.text();
+      captureBalances(text);
+      // CSVs are full of reference numbers whose digits can false-match an
+      // account — don't auto-route; prompt the user to choose the account.
+      setRoute({ status: "none" });
+      const parsed = parseCSV(text);
+      const map = detectColumns(parsed);
+      setCsvRows(parsed);
+      setColMap(map);
+      finishParse(fromCSV(parsed, map), text);
+    } catch (e: any) {
+      setError(`Could not read that file: ${e?.message ?? e}.`);
     } finally {
       setBusy(false);
     }
@@ -429,6 +461,56 @@ export function StatementsView({
 
       {step === "upload" && (
         <>
+          {/* Encrypted PDF — ask for the password */}
+          {pendingPdf && (
+            <Card className="border-brand-200 bg-brand-50/40">
+              <div className="flex items-center gap-2">
+                <Lock className="h-4 w-4 text-brand-600" />
+                <h3 className="text-sm font-semibold">
+                  This PDF is password-protected
+                </h3>
+              </div>
+              <p className="mt-1 text-xs text-ink-muted">
+                {pendingPdf.name} — enter the password to unlock and import it.
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (pdfPassword) processPdf(pendingPdf, pdfPassword);
+                }}
+                className="mt-3 flex flex-wrap items-center gap-2"
+              >
+                <input
+                  type="password"
+                  autoFocus
+                  value={pdfPassword}
+                  onChange={(e) => setPdfPassword(e.target.value)}
+                  placeholder="PDF password"
+                  className="input max-w-[240px]"
+                />
+                <button
+                  type="submit"
+                  disabled={busy || !pdfPassword}
+                  className="btn-dark text-sm"
+                >
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Lock className="h-4 w-4" />
+                  )}
+                  Unlock &amp; parse
+                </button>
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="btn-ghost text-sm"
+                >
+                  Cancel
+                </button>
+              </form>
+            </Card>
+          )}
+
           <StatementChecklist accounts={accts} statements={statements} />
 
           <div className="grid gap-4 lg:grid-cols-5">
