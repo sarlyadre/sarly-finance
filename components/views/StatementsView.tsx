@@ -20,6 +20,7 @@ import {
   statementPeriod,
   detectBalances,
   detectAccountRefs,
+  detectStatementDate,
   type ParsedTxn,
   type ColumnMap,
 } from "@/lib/parse/statement";
@@ -99,6 +100,10 @@ export function StatementsView({
   const [opening, setOpening] = useState<number | null>(null);
   const [closing, setClosing] = useState<number | null>(null);
   const [applyClosing, setApplyClosing] = useState(true);
+  // The statement's own date — used to file an empty statement in its month.
+  const [stmtDate, setStmtDate] = useState<string | null>(null);
+  // Whether the current statement parsed to zero transactions (but is valid).
+  const [emptyStatement, setEmptyStatement] = useState(false);
 
   // Auto-routing: which account this statement was matched to.
   const [route, setRoute] = useState<
@@ -158,6 +163,8 @@ export function StatementsView({
     setError(null);
     setOpening(null);
     setClosing(null);
+    setStmtDate(null);
+    setEmptyStatement(false);
     setRoute(null);
     if (fileInput.current) fileInput.current.value = "";
   }
@@ -167,6 +174,7 @@ export function StatementsView({
     setOpening(b.opening);
     setClosing(b.closing);
     setApplyClosing(b.closing !== null);
+    setStmtDate(detectStatementDate(text));
   }
 
   // Match the statement's account number to an existing account and select it.
@@ -186,13 +194,29 @@ export function StatementsView({
     }
   }
 
-  function finishParse(parsed: ParsedTxn[]) {
+  function finishParse(parsed: ParsedTxn[], text: string) {
     if (parsed.length === 0) {
+      // A statement with a detectable balance or account number is a real
+      // statement that simply had no activity — allow recording it (updates the
+      // balance + marks the month complete) rather than blocking with an error.
+      const b = detectBalances(text);
+      const refs = detectAccountRefs(text);
+      const looksValid =
+        b.closing !== null ||
+        accts.some((a) => a.account_ref && refs.includes(a.account_ref));
+      if (looksValid) {
+        setEmptyStatement(true);
+        setRows([]);
+        setError(null);
+        setStep("review");
+        return;
+      }
       setError(
         "Couldn't find any transactions. Try a CSV export, or check the paste/columns."
       );
       return;
     }
+    setEmptyStatement(false);
     setError(null);
     setRows(markDuplicates(parsed, existing));
     setStep("review");
@@ -210,7 +234,7 @@ export function StatementsView({
         const text = await extractPdfText(file);
         captureBalances(text);
         autoRouteAccount(text);
-        finishParse(fromText(text));
+        finishParse(fromText(text), text);
       } else {
         setSource("csv");
         const text = await file.text();
@@ -222,7 +246,7 @@ export function StatementsView({
         const map = detectColumns(parsed);
         setCsvRows(parsed);
         setColMap(map);
-        finishParse(fromCSV(parsed, map));
+        finishParse(fromCSV(parsed, map), text);
       }
     } catch (e: any) {
       setError(
@@ -239,7 +263,7 @@ export function StatementsView({
     setFilename("Pasted text");
     captureBalances(pasteText);
     autoRouteAccount(pasteText);
-    finishParse(fromText(pasteText));
+    finishParse(fromText(pasteText), pasteText);
   }
 
   function remap(key: keyof Omit<ColumnMap, "headerRow">, value: number) {
@@ -273,13 +297,18 @@ export function StatementsView({
       return;
     }
     const toImport = rows.filter((r) => r.include && r.date && r.amount !== 0);
-    if (toImport.length === 0) {
+    if (toImport.length === 0 && !emptyStatement) {
       setError("Nothing selected to import.");
       return;
     }
     setImporting(true);
     setError(null);
-    const period = statementPeriod(toImport);
+    // Empty statement: file it against its own statement date (its month), not
+    // the range of transactions (there are none).
+    const period =
+      toImport.length > 0
+        ? statementPeriod(toImport)
+        : { start: stmtDate, end: stmtDate };
 
     const { data: stmt, error: se } = await supabase
       .from("statements")
@@ -338,13 +367,15 @@ export function StatementsView({
       };
     });
 
-    const { error: te } = await supabase.from("transactions").insert(payload);
-    if (te) {
-      setImporting(false);
-      // roll back the statement row so we don't leave an empty import
-      await supabase.from("statements").delete().eq("id", stmt.id);
-      setError(`Import failed: ${te.message}`);
-      return;
+    if (payload.length > 0) {
+      const { error: te } = await supabase.from("transactions").insert(payload);
+      if (te) {
+        setImporting(false);
+        // roll back the statement row so we don't leave an empty import
+        await supabase.from("statements").delete().eq("id", stmt.id);
+        setError(`Import failed: ${te.message}`);
+        return;
+      }
     }
 
     // Set the account balance to the statement's closing balance (authoritative).
@@ -611,7 +642,7 @@ export function StatementsView({
                 )}
                 <button
                   onClick={doImport}
-                  disabled={importing || selected.length === 0}
+                  disabled={importing || (selected.length === 0 && !emptyStatement)}
                   className="btn-brand text-sm"
                 >
                   {importing ? (
@@ -619,7 +650,7 @@ export function StatementsView({
                   ) : (
                     <Check className="h-4 w-4" />
                   )}
-                  Import {selected.length}
+                  {emptyStatement ? "Record statement" : `Import ${selected.length}`}
                 </button>
               </div>
             </div>
@@ -697,7 +728,30 @@ export function StatementsView({
             )}
           </Card>
 
+          {/* Empty statement notice */}
+          {emptyStatement && (
+            <Card>
+              <div className="flex flex-col items-center py-8 text-center">
+                <FileText className="h-8 w-8 text-ink-soft" />
+                <p className="mt-3 text-sm font-semibold">
+                  No transactions this period
+                </p>
+                <p className="mt-1 max-w-sm text-xs text-ink-muted">
+                  This looks like a valid statement with no activity
+                  {stmtDate ? ` for ${fmtDate(stmtDate, "MMMM yyyy")}` : ""}.
+                  Recording it marks the month complete on the checklist
+                  {closing !== null
+                    ? ` and sets the balance to ${money(closing)}`
+                    : ""}
+                  . Pick the account above, then click{" "}
+                  <b>Record statement</b>.
+                </p>
+              </div>
+            </Card>
+          )}
+
           {/* Editable rows */}
+          {!emptyStatement && (
           <Card className="overflow-hidden p-0">
             <div className="max-h-[560px] overflow-auto">
               <table className="w-full text-sm">
@@ -812,6 +866,7 @@ export function StatementsView({
               </table>
             </div>
           </Card>
+          )}
         </>
       )}
 

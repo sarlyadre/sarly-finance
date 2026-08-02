@@ -588,6 +588,20 @@ export function statementPeriod(parsed: ParsedTxn[]): {
 }
 
 /**
+ * The statement's own date (e.g. "STATEMENT DATE 30/06/26"), used to attribute
+ * an empty (no-transaction) statement to the correct month. Falls back to the
+ * first full date found in the text.
+ */
+export function detectStatementDate(text: string): string | null {
+  const labelled = text.match(
+    /(?:statement\s*date|tarikh\s*penyata|結單日期)[\s\S]{0,30}?(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i
+  );
+  const m =
+    labelled ?? text.match(/\b(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})\b/);
+  return m ? parseDate(m[1]) || null : null;
+}
+
+/**
  * Extract candidate account identifiers (last 4 digits) from a statement so an
  * import can be auto-routed to the matching account. Looks near the account-
  * number labels and at card-number groups, to avoid picking up transaction refs.
