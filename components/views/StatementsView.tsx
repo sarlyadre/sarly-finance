@@ -27,6 +27,7 @@ import type { Account, AccountType, Statement, StatementSource } from "@/lib/typ
 import { Card } from "@/components/ui";
 import { PageHead } from "./AccountsView";
 import { Modal, Field } from "@/components/Modal";
+import { StatementChecklist } from "@/components/StatementChecklist";
 import {
   Upload,
   FileText,
@@ -397,6 +398,8 @@ export function StatementsView({
 
       {step === "upload" && (
         <>
+          <StatementChecklist accounts={accts} statements={statements} />
+
           <div className="grid gap-4 lg:grid-cols-5">
             {/* Dropzone */}
             <Card className="lg:col-span-3">
