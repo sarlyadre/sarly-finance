@@ -534,7 +534,7 @@ const CATEGORY_RULES: [RegExp, string][] = [
   [/\bpymt\b|pymt@|payment\s*received|payment\s*-\s*thank|autopay|standing\s*instruction/i, TRANSFER_CATEGORY],
   [/salary|payroll|gaji|wages|bonus/i, "Income"],
   [/dividend|interest|refund|reimburs|cashback|transfer from|incoming/i, "Income"],
-  [/reload|top.?up|transfer to wallet|fund transfer|wallet.*top|add\s*money|cash\s*in\b/i, TRANSFER_CATEGORY],
+  [/reload|\btop(?:ped|ping)?[\s-]?up\b|transfer to wallet|fund transfer|wallet.*top|add\s*money|cash\s*in\b|own\s*account|between\s*(?:my|your)\s*account/i, TRANSFER_CATEGORY],
   [/grocer|mart|tesco|lotus|aeon|jaya\s*grocer|giant|nsk|village\s*grocer|cold\s*storage|restaurant|cafe|food|mcd|kfc|starbucks|grabfood|foodpanda|kopitiam|mamak/i, FOOD_DEFAULT],
   [/petrol|petronas|shell|caltex|bhp|fuel|\btoll\b|touch\s*'?n\s*go|tng|parking|grab\b|mrt|lrt|rapidkl|airasia|flight|myeg\s*road|rfid|besraya|akleh|kesas|sprint|\bduke\b|\bnpe\b|\bsuke\b|\bspe\b|\bplus\b|lekas|litrak|penchala|grand\s*saga|\bmex\b|nkve|guthrie|\bsilk\b|ledp|smart\s*tunnel|lebuhraya|highway|expressway/i, "Transportation"],
   [/tnb|electric|air\s*selangor|syabas|indah\s*water|unifi|maxis|celcom|digi|umobile|yes|streamyx|astro|water\s*bill|utilit/i, "Utilities"],

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DEFAULT_FX } from "@/lib/constants";
 import { getPersonalProfileId, getBalances, getStatement } from "@/lib/wise";
+import { guessCategory } from "@/lib/parse/statement";
 
 export type WiseSyncResult = {
   accounts: number;
@@ -72,7 +73,7 @@ export async function runWiseSync(
           account_id: account!.id,
           txn_date: t.date,
           description: t.description,
-          category: t.amount >= 0 ? "Income" : "To be confirmed",
+          category: guessCategory(t.description),
           amount: t.amount,
           source: "wise",
           external_ref: t.ref,
