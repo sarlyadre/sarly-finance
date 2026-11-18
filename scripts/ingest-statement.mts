@@ -528,19 +528,31 @@ export async function resolveOwnerId(supabase: SupabaseClient): Promise<string> 
   return ownerId;
 }
 
+type ExistingRow = {
+  txn_date: string;
+  amount: number;
+  description: string;
+  source: string | null;
+  external_ref: string | null;
+};
+
+// Supabase caps a select at 1,000 rows, and a card account passes that
+// within a year — page through every row, or duplicates go unseen.
 async function fetchExisting(supabase: SupabaseClient, accountId: string) {
-  const { data, error } = await supabase
-    .from("transactions")
-    .select("txn_date, amount, description, source, external_ref")
-    .eq("account_id", accountId);
-  if (error) throw new Error(`Could not read existing transactions: ${error.message}`);
-  return (data ?? []) as {
-    txn_date: string;
-    amount: number;
-    description: string;
-    source: string | null;
-    external_ref: string | null;
-  }[];
+  const PAGE = 1000;
+  const all: ExistingRow[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("txn_date, amount, description, source, external_ref")
+      .eq("account_id", accountId)
+      .order("id")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Could not read existing transactions: ${error.message}`);
+    all.push(...((data ?? []) as ExistingRow[]));
+    if (!data || data.length < PAGE) break;
+  }
+  return all;
 }
 
 // ------------------------------------------------------------------
