@@ -392,21 +392,49 @@ function hasCJK(s: string): boolean {
   return /[　-鿿＀-￯]/.test(s);
 }
 
-/** Derive the statement's year from a full date in the header, else this year. */
-function detectStatementYear(text: string): number {
-  const m = text.match(/\b\d{1,2}[\/\-]\d{1,2}[\/\-](\d{2,4})\b/);
-  if (m) {
-    let y = parseInt(m[1], 10);
-    if (y < 100) y += 2000;
-    if (y > 1990 && y < 2100) return y;
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/**
+ * The statement's own date, which anchors the year of bare dd/mm transaction
+ * dates: the earliest full date in the text, either dd/mm/yy(yy) (bank
+ * statements, "STATEMENT DATE : 31/10/26") or dd MMM yy(yy) (card statements,
+ * "28 NOV 23"). Falls back to today.
+ */
+function detectStatementAnchor(text: string): { year: number; month: number } {
+  const cands: { idx: number; year: number; month: number }[] = [];
+  const num = text.match(/\b\d{1,2}[\/\-](\d{1,2})[\/\-](\d{2,4})\b/);
+  if (num && num.index !== undefined) {
+    cands.push({ idx: num.index, year: +num[2], month: +num[1] });
   }
-  return new Date().getFullYear();
+  const named = text.match(
+    /\b\d{1,2}\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s+(\d{2,4})\b/i
+  );
+  if (named && named.index !== undefined) {
+    cands.push({
+      idx: named.index,
+      year: +named[2],
+      month: MONTHS.indexOf(named[1].toUpperCase()) + 1,
+    });
+  }
+  const valid = cands
+    .map((c) => ({ ...c, year: c.year < 100 ? c.year + 2000 : c.year }))
+    .filter((c) => c.year > 1990 && c.year < 2100 && c.month >= 1 && c.month <= 12)
+    .sort((a, b) => a.idx - b.idx);
+  if (valid.length) return { year: valid[0].year, month: valid[0].month };
+  const now = new Date();
+  return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
 
-function completeDate(token: string, year: number): string {
-  return BARE_DATE_RE.test(token.trim())
-    ? `${token.trim()}/${year}`
-    : token.trim();
+/**
+ * Give a bare dd/mm the statement's year — or the year before, for a month
+ * later than the statement month (December lines on a January statement).
+ */
+function completeDate(token: string, anchor: { year: number; month: number }): string {
+  const t = token.trim();
+  if (!BARE_DATE_RE.test(t)) return t;
+  const month = parseInt(t.split(/[\/\-]/)[1], 10);
+  const year = month > anchor.month ? anchor.year - 1 : anchor.year;
+  return `${t}/${year}`;
 }
 
 function tokenSign(tok: string, abs: number): number {
@@ -424,7 +452,7 @@ function tokenSign(tok: string, abs: number): number {
  * debits, and infers sign from the running balance when one is present.
  */
 export function fromText(text: string): ParsedTxn[] {
-  const year = detectStatementYear(text);
+  const anchor = detectStatementAnchor(text);
   const lines = text.split(/\r?\n/).map((l) => l.trim());
   const out: ParsedTxn[] = [];
 
@@ -462,7 +490,7 @@ export function fromText(text: string): ParsedTxn[] {
     const amounts = dm ? line.match(MONEY_RE) : null;
 
     if (dm && amounts && amounts.length) {
-      const date = parseDate(completeDate(dm[1], year));
+      const date = parseDate(completeDate(dm[1], anchor));
       if (date) {
         flush();
         const vals = amounts
