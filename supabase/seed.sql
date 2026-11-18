@@ -28,14 +28,14 @@ begin
   insert into public.transactions (owner_id, txn_date, description, category, amount) values
     (uid, current_date - 1,  'Salary',                 'Income',        9000.00),
     (uid, current_date - 2,  'Jaya Grocer',            'Food',          -320.50),
-    (uid, current_date - 3,  'Petronas fuel',          'Transportation',-180.00),
+    (uid, current_date - 3,  'Petronas fuel',          'Travel',        -180.00),
     (uid, current_date - 4,  'Netflix + Spotify',      'Subscriptions', -64.90),
     (uid, current_date - 5,  'TNB electricity',        'Utilities',    -210.00),
     (uid, current_date - 6,  'Clinic visit',           'Healthcare',   -150.00),
     (uid, current_date - 8,  'Investment top-up',      'Investments',  -1000.00),
     (uid, current_date - 9,  'Dividend payout',        'Income',        1100.00),
     (uid, current_date - 10, 'Lunch — team',           'Food',          -88.00),
-    (uid, current_date - 12, 'Grab rides',             'Transportation', -95.40),
+    (uid, current_date - 12, 'Grab rides',             'Travel',         -95.40),
     (uid, current_date - 14, 'Home rent',              'Housing',      -1600.00);
 
   -- Commitments (incl. paid-on-behalf)

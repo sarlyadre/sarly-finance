@@ -563,19 +563,23 @@ const CATEGORY_RULES: [RegExp, string][] = [
   // The bank side of a card payment ("00 MASTERCARD ISLAMIC *XXXX…",
   // "PAYMENT FR A/C VISA ISLAMIC …") and e-wallet top-ups charged to a card.
   [/\b00\s*(?:master\s*card|visa)\s*islamic\b|payment\s*fr\s*a\/c\s*(?:master\s*card|visa)|bigpay-ec|grabpay-ec/i, TRANSFER_CATEGORY],
+  // Parking before anything else that could claim a car-park line
+  // ("KLCC PARKING-ENTRY & EXIT", "THE CAMPUS AMPANG-CP", "APSB_T24_PLZ LOW YAT").
+  [/parking|car\s*park|-cp\b|apsb_|ezpark|park\s*(?:&|and|n)\s*ride/i, "Parking"],
   // Specific merchants first, so they win over the broad keyword rules below.
   [/prubsn|prudential|takaful|insurance|great\s*eastern|allianz|etiqa|\baia\b|zurich|tokio\s*marine/i, "Insurance"],
   [/shopee(?!\s*food)|lazada|zalora|harvey\s*norman|muji|naj\s*n\s*belle|ikea|uniqlo|daiso|ace\s*hardware|mr\.?\s*diy/i, "Shopping"],
+  [/\bgsc\b|golden\s*screen|\btgv\b|\bmbo\b|cinema|bowling|karaoke|\bk\s*box\b|red\s*box|concert|ticket2u|ticketmaster|zoo\s*negara|aquaria|theme\s*park|sunway\s*lagoon|legoland|escape\s*room|timezone|steam\s*(?:games|powered)|playstation|nintendo|xbox/i, "Entertainment"],
   // Food before healthcare: hospital cafés (O'Briens-PPUM) are meals.
-  [/restoran|fatimah\s*ghous|berkat\s*madinah|tandoori|o'?briens|coffee|gloria\s*jean|nando|pasaraya|7-eleven|mynews|bakery|diner|grill\b/i, FOOD_DEFAULT],
+  [/restoran|fatimah\s*ghous|berkat\s*madinah|tandoori|o'?briens|coffee|gloria\s*jean|nando|pasaraya|7-eleven|mynews|bakery|diner|grill\b|\bqra\b/i, FOOD_DEFAULT],
   [/\bppum\b|med\s*ctr|medical\s*cent|\bumsc\b|pergigian/i, "Healthcare"],
-  [/\bpss\b|setel|auto\s*care|apsb_|-cp\b|car\s*park/i, "Transportation"],
+  [/\bpss\b|setel|auto\s*care/i, "Travel"],
   [/cash\s*rebate/i, "Income"],
   [/salary|payroll|gaji|wages|bonus/i, "Income"],
   [/dividend|interest|refund|reimburs|cashback|transfer from|incoming/i, "Income"],
   [/reload|\btop(?:ped|ping)?[\s-]?up\b|transfer to wallet|fund transfer|wallet.*top|add\s*money|cash\s*in\b|own\s*account|between\s*(?:my|your)\s*account/i, TRANSFER_CATEGORY],
   [/grocer|mart|tesco|lotus|aeon|jaya\s*grocer|giant|nsk|village\s*grocer|cold\s*storage|restaurant|cafe|food|mcd|kfc|starbucks|grabfood|foodpanda|kopitiam|mamak/i, FOOD_DEFAULT],
-  [/petrol|petronas|shell|caltex|bhp|fuel|\btoll\b|touch\s*'?n\s*go|tng|parking|grab\b|mrt|lrt|rapidkl|airasia|flight|myeg\s*road|rfid|besraya|akleh|kesas|sprint|\bduke\b|\bnpe\b|\bsuke\b|\bspe\b|\bplus\b|lekas|litrak|penchala|grand\s*saga|\bmex\b|nkve|guthrie|\bsilk\b|ledp|smart\s*tunnel|lebuhraya|highway|expressway/i, "Transportation"],
+  [/petrol|petronas|shell|caltex|bhp|fuel|\btoll\b|touch\s*'?n\s*go|tng|grab\b|mrt|lrt|rapidkl|airasia|flight|myeg\s*road|rfid|besraya|akleh|kesas|sprint|\bduke\b|\bnpe\b|\bsuke\b|\bspe\b|\bplus\b|lekas|litrak|penchala|grand\s*saga|\bmex\b|nkve|guthrie|\bsilk\b|ledp|smart\s*tunnel|lebuhraya|highway|expressway/i, "Travel"],
   [/tnb|electric|air\s*selangor|syabas|indah\s*water|unifi|maxis|celcom|digi|umobile|yes|streamyx|astro|water\s*bill|utilit/i, "Utilities"],
   [/netflix|spotify|youtube|disney|prime\s*video|apple\.com|google\s*(one|storage)|icloud|subscription|patreon|openai|anthropic|claude|github|vercel|figma|notion|canva|adobe/i, "Subscriptions"],
   [/rent|mortgage|sewa|housing|maintenance\s*fee|management\s*fee/i, "Housing"],
