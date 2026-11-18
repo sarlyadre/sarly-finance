@@ -136,6 +136,8 @@ export const CATEGORIES = [
   "Food (non-claimable)",
   "Transportation",
   "Healthcare",
+  "Shopping",
+  "Insurance",
   "Investments",
   "Utilities",
   "Subscriptions",
@@ -161,6 +163,8 @@ export const CATEGORY_COLORS: Record<string, string> = {
   Food: "#c1de78", // legacy rows
   Transportation: "#93c23e",
   Healthcare: "#e0705f",
+  Shopping: "#d98fb0",
+  Insurance: "#8a7fc7",
   Investments: "#587a26",
   Utilities: "#5b9bd5",
   Subscriptions: "#b0d55a",

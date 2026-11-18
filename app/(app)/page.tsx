@@ -4,11 +4,10 @@ import {
   getTransactions,
   getCommitments,
   getClaims,
+  getDailyFlows,
 } from "@/lib/data";
 import {
   totalBalance,
-  monthFlows,
-  weekBars,
   spendingByCategory,
   upcomingCommitments,
   claimTotals,
@@ -17,7 +16,7 @@ import {
 import { money, moneySigned, fmtDay, fmtDate } from "@/lib/format";
 import { CATEGORY_COLORS, BEHALF } from "@/lib/constants";
 import { Card, CardHeader, BehalfBadge, Progress, EmptyState } from "@/components/ui";
-import { WeeklyBars } from "@/components/charts/WeeklyBars";
+import { FlowChart } from "@/components/charts/FlowChart";
 import { Gauge } from "@/components/charts/Gauge";
 import {
   TrendingUp,
@@ -31,16 +30,26 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [accounts, txns, commitments, claims] = await Promise.all([
+  const [accounts, txns, commitments, claims, daily] = await Promise.all([
     getAccounts(),
     getTransactions(),
     getCommitments(),
     getClaims(),
+    getDailyFlows(),
   ]);
 
   const balance = totalBalance(accounts);
-  const flows = monthFlows(txns);
-  const bars = weekBars(txns);
+  // This month's totals from the full daily history (the transaction list
+  // above is only the latest 500 rows).
+  const monthKey = fmtDate(new Date(), "yyyy-MM");
+  const flows = Object.entries(daily).reduce(
+    (s, [day, f]) =>
+      day.startsWith(monthKey)
+        ? { ...s, income: s.income + f.income, expense: s.expense + f.expense }
+        : s,
+    { income: 0, expense: 0, net: 0 }
+  );
+  flows.net = flows.income - flows.expense;
   const cats = spendingByCategory(txns);
   const upcoming = upcomingCommitments(commitments).slice(0, 5);
   const claimSum = claimTotals(claims);
@@ -92,7 +101,7 @@ export default async function DashboardPage() {
             </div>
           </div>
           <div className="mt-4">
-            <WeeklyBars data={bars} />
+            <FlowChart daily={daily} />
           </div>
         </Card>
 

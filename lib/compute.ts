@@ -1,7 +1,5 @@
 import {
-  startOfWeek,
   addDays,
-  isSameDay,
   parseISO,
   differenceInCalendarDays,
   format,
@@ -30,43 +28,6 @@ export function totalBalance(accounts: Account[]): number {
 
 /** Inter-account movements (card payments etc.) aren't income or spending. */
 const isTransfer = (t: Transaction) => t.category === "Transfer";
-
-export function monthFlows(txns: Transaction[], ref = new Date()) {
-  let income = 0;
-  let expense = 0;
-  for (const t of txns) {
-    if (isTransfer(t)) continue;
-    const d = parseISO(t.txn_date);
-    if (!isSameMonth(d, ref)) continue;
-    if (t.amount >= 0) income += Number(t.amount);
-    else expense += Math.abs(Number(t.amount));
-  }
-  return { income, expense, net: income - expense };
-}
-
-/** Bars for the current week: savings(income kept), income, expense per day. */
-export function weekBars(txns: Transaction[], ref = new Date()) {
-  const start = startOfWeek(ref, { weekStartsOn: 0 });
-  const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  return days.map((day) => {
-    let income = 0;
-    let expense = 0;
-    for (const t of txns) {
-      if (isTransfer(t)) continue;
-      const d = parseISO(t.txn_date);
-      if (!isSameDay(d, day)) continue;
-      if (t.amount >= 0) income += Number(t.amount);
-      else expense += Math.abs(Number(t.amount));
-    }
-    return {
-      label: format(day, "EEE"),
-      date: day,
-      income,
-      expense,
-      savings: Math.max(0, income - expense),
-    };
-  });
-}
 
 export function spendingByCategory(txns: Transaction[], ref = new Date()) {
   const map = new Map<string, number>();

@@ -32,6 +32,35 @@ export async function getTransactions(limit = 500): Promise<Transaction[]> {
   return (data as Transaction[]) ?? [];
 }
 
+export type DailyFlow = { income: number; expense: number };
+
+/**
+ * Income and spending per day (yyyy-MM-dd) across the whole history, for the
+ * dashboard chart. Transfers between own accounts (card payments, top-ups)
+ * are neither. Pages through every row: Supabase caps a select at 1,000.
+ */
+export async function getDailyFlows(): Promise<Record<string, DailyFlow>> {
+  const supabase = createClient();
+  const out: Record<string, DailyFlow> = {};
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await supabase
+      .from("transactions")
+      .select("txn_date, amount, category")
+      .order("id")
+      .range(from, from + PAGE - 1);
+    for (const t of data ?? []) {
+      if (t.category === "Transfer") continue;
+      const d = (out[t.txn_date] ??= { income: 0, expense: 0 });
+      const amt = Number(t.amount);
+      if (amt >= 0) d.income += amt;
+      else d.expense += -amt;
+    }
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
+}
+
 export async function getCommitments(): Promise<Commitment[]> {
   const supabase = createClient();
   const { data } = await supabase

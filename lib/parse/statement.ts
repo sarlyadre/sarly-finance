@@ -560,6 +560,17 @@ export function fromText(text: string): ParsedTxn[] {
 const CATEGORY_RULES: [RegExp, string][] = [
   // Card / account payments — money moved between your own accounts.
   [/\bpymt\b|pymt@|payment\s*received|payment\s*-\s*thank|autopay|standing\s*instruction/i, TRANSFER_CATEGORY],
+  // The bank side of a card payment ("00 MASTERCARD ISLAMIC *XXXX…",
+  // "PAYMENT FR A/C VISA ISLAMIC …") and e-wallet top-ups charged to a card.
+  [/\b00\s*(?:master\s*card|visa)\s*islamic\b|payment\s*fr\s*a\/c\s*(?:master\s*card|visa)|bigpay-ec|grabpay-ec/i, TRANSFER_CATEGORY],
+  // Specific merchants first, so they win over the broad keyword rules below.
+  [/prubsn|prudential|takaful|insurance|great\s*eastern|allianz|etiqa|\baia\b|zurich|tokio\s*marine/i, "Insurance"],
+  [/shopee(?!\s*food)|lazada|zalora|harvey\s*norman|muji|naj\s*n\s*belle|ikea|uniqlo|daiso|ace\s*hardware|mr\.?\s*diy/i, "Shopping"],
+  // Food before healthcare: hospital cafés (O'Briens-PPUM) are meals.
+  [/restoran|fatimah\s*ghous|berkat\s*madinah|tandoori|o'?briens|coffee|gloria\s*jean|nando|pasaraya|7-eleven|mynews|bakery|diner|grill\b/i, FOOD_DEFAULT],
+  [/\bppum\b|med\s*ctr|medical\s*cent|\bumsc\b|pergigian/i, "Healthcare"],
+  [/\bpss\b|setel|auto\s*care|apsb_|-cp\b|car\s*park/i, "Transportation"],
+  [/cash\s*rebate/i, "Income"],
   [/salary|payroll|gaji|wages|bonus/i, "Income"],
   [/dividend|interest|refund|reimburs|cashback|transfer from|incoming/i, "Income"],
   [/reload|\btop(?:ped|ping)?[\s-]?up\b|transfer to wallet|fund transfer|wallet.*top|add\s*money|cash\s*in\b|own\s*account|between\s*(?:my|your)\s*account/i, TRANSFER_CATEGORY],
