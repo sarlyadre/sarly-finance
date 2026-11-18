@@ -764,15 +764,15 @@ function RowBtn({
   );
 }
 
-// Rows from the daily bank alert-email sync; replaced once the month's
-// statement is imported.
+// Rows not yet on a statement (bank alert emails, Maybank2u's unbilled list);
+// replaced once the month's statement is imported.
 function ProvisionalTag() {
   return (
     <span
       className="ml-1.5 inline-flex items-center rounded-full bg-tangerine/10 px-1.5 py-0.5 align-middle text-[10px] font-medium text-tangerine"
-      title="From a bank alert email — will be replaced by the statement"
+      title="Not on a statement yet — replaced when the statement is imported"
     >
-      Alert
+      Pending
     </span>
   );
 }

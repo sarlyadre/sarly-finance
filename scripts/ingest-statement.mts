@@ -414,29 +414,53 @@ export function dedupeAgainstExisting(
   return { toInsert, duplicates };
 }
 
-// Alert emails never word a transaction the way the statement does, so they
-// are matched on date + amount (or their own reference) against every row
-// already on the account — a credit the statement has already recorded, or a
-// second alert for the same transfer (e.g. a "received money" alert plus a
-// Payment Advice), is skipped instead of double-counted.
+// Provisional rows (alert emails, or Maybank2u's not-yet-billed transaction
+// list) never word a transaction the way the statement does, so they are
+// matched on date + amount (or their own reference), counted: each existing
+// row on the account cancels one incoming row. Within the batch, every row is
+// its own transaction — two same-day RM 2,000 transfers to different people
+// are both kept — except one pairing: a Payment Advice (it carries a `ref`)
+// and a plain "received money" alert (no ref) on the same date and amount are
+// two emails about one transfer, and count once.
 export function dedupeAlerts(
   valid: ValidTxn[],
   existing: { txn_date: string; amount: number; external_ref?: string | null }[]
 ): { toInsert: ValidTxn[]; duplicates: ValidTxn[] } {
   const key = (d: string, a: number) => `${d}|${Number(a).toFixed(2)}`;
-  const seen = new Set(existing.map((e) => key(e.txn_date, e.amount)));
+  const remaining = new Map<string, number>();
+  for (const e of existing) {
+    const k = key(e.txn_date, e.amount);
+    remaining.set(k, (remaining.get(k) ?? 0) + 1);
+  }
   const refs = new Set(existing.map((e) => e.external_ref).filter(Boolean));
+  // per date+amount: how many advice (ref) and plain-alert rows this batch has
+  // seen but not yet paired off
+  const unpaired = new Map<string, { withRef: number; noRef: number }>();
   const toInsert: ValidTxn[] = [];
   const duplicates: ValidTxn[] = [];
   for (const v of valid) {
     const k = key(v.date, v.amount);
-    if (seen.has(k) || (v.ref && refs.has(v.ref))) {
+    const u = unpaired.get(k) ?? { withRef: 0, noRef: 0 };
+    unpaired.set(k, u);
+    const left = remaining.get(k) ?? 0;
+    const partner = v.ref ? u.noRef : u.withRef;
+    if (v.ref && refs.has(v.ref)) {
+      duplicates.push(v);
+    } else if (left > 0) {
+      remaining.set(k, left - 1);
+      duplicates.push(v);
+    } else if (partner > 0) {
+      // the other email about this same transfer is already in the batch
+      if (v.ref) u.noRef--;
+      else u.withRef--;
       duplicates.push(v);
       continue;
+    } else {
+      if (v.ref) refs.add(v.ref);
+      toInsert.push(v);
     }
-    seen.add(k);
-    if (v.ref) refs.add(v.ref);
-    toInsert.push(v);
+    if (v.ref) u.withRef++;
+    else u.noRef++;
   }
   return { toInsert, duplicates };
 }
@@ -619,6 +643,8 @@ async function main() {
         amount: t.amount,
         source: "alert",
         external_ref: t.ref ?? null,
+        card: t.card ?? null,
+        cardholder: t.cardholder ?? null,
       }));
       const { error: te } = await supabase.from("transactions").insert(rows);
       if (te) throw new Error(`Insert failed: ${te.message}`);
