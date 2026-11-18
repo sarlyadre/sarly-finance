@@ -410,6 +410,20 @@ export function StatementsView({
       }
     }
 
+    // The statement is now the real record for these dates: drop the
+    // provisional rows the daily alert-email sync added for them.
+    if (period.start && period.end) {
+      const touched = Array.from(new Set(payload.map((p) => p.account_id)));
+      if (touched.length === 0) touched.push(accountId);
+      await supabase
+        .from("transactions")
+        .delete()
+        .in("account_id", touched)
+        .eq("source", "alert")
+        .gte("txn_date", period.start)
+        .lte("txn_date", period.end);
+    }
+
     // Set the account balance to the statement's closing balance (authoritative).
     if (applyClosing && closing !== null && accountId) {
       await supabase

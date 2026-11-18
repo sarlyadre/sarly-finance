@@ -89,6 +89,7 @@ export type CliArgs = {
   file?: string;
   account?: string;
   dryRun: boolean;
+  alerts: boolean;
   password?: string;
 };
 
@@ -97,10 +98,13 @@ export function parseArgs(argv: string[]): CliArgs {
   const positional: string[] = [];
   const kv: Record<string, string> = {};
   let dryRun = false;
+  let alerts = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--dry-run") {
       dryRun = true;
+    } else if (a === "--alerts") {
+      alerts = true;
     } else if (a === "--password") {
       kv.password = args[++i];
     } else if (a.startsWith("--password=")) {
@@ -121,20 +125,26 @@ export function parseArgs(argv: string[]): CliArgs {
     file: kv.file ?? positional[0],
     account: kv.account ?? positional[1],
     dryRun,
+    alerts,
     password: kv.password,
   };
 }
 
 const USAGE = `Usage:
-  npx tsx scripts/ingest-statement.mts <file> <account> [--dry-run] [--password <pwd>]
+  npx tsx scripts/ingest-statement.mts <file> <account> [--dry-run] [--alerts] [--password <pwd>]
 
 <file>     .json (recommended — a transaction list already transcribed by
            Claude reading the statement PDF/photo), .pdf, or .csv.
 <account>  Exact/partial account name, ••last-4, or id (never guessed).
+--alerts   The .json holds bank alert-email transactions (provisional): they are
+           tagged source "alert" and later replaced when the statement covering
+           their dates is imported.
+--password Encrypted PDF password; defaults to STATEMENT_PDF_PASSWORD in .env.local.
 
 Examples:
   npx tsx scripts/ingest-statement.mts ./statement.json "Maybank Islamic Premier"
   npx tsx scripts/ingest-statement.mts ./statement.pdf RHB --dry-run
+  npx tsx scripts/ingest-statement.mts ./alerts-0748.json 0748 --alerts
 `;
 
 // ------------------------------------------------------------------
@@ -169,6 +179,7 @@ export type RawTxn = {
   description: string;
   amount: number;
   category?: string | null;
+  ref?: string | null; // alert reference (e.g. Payment Advice no.), stored as external_ref
 };
 
 export function loadJsonTransactions(file: string): RawTxn[] {
@@ -278,7 +289,13 @@ export async function loadTransactions(
 // guessCategory() the Wise sync and in-app importer use, including the
 // transfer/top-up fix already shipped there.
 // ------------------------------------------------------------------
-export type ValidTxn = { date: string; description: string; amount: number; category: string };
+export type ValidTxn = {
+  date: string;
+  description: string;
+  amount: number;
+  category: string;
+  ref?: string | null;
+};
 export type InvalidTxn = { index: number; reason: string; raw: unknown };
 
 export function validateAndCategorize(rows: RawTxn[]): {
@@ -307,7 +324,8 @@ export function validateAndCategorize(rows: RawTxn[]): {
       return;
     }
     const category = (r?.category && String(r.category).trim()) || guessCategory(description);
-    const txn: ValidTxn = { date, description, amount, category };
+    const ref = r?.ref ? String(r.ref).trim() || null : null;
+    const txn: ValidTxn = { date, description, amount, category, ref };
     valid.push(txn);
     if (category === REVIEW_CATEGORY) needsReview.push(txn);
   });
@@ -341,6 +359,33 @@ export function dedupeAgainstExisting(
   flagged.forEach((f, i) => {
     (f.duplicate ? duplicates : toInsert).push(valid[i]);
   });
+  return { toInsert, duplicates };
+}
+
+// Alert emails never word a transaction the way the statement does, so they
+// are matched on date + amount (or their own reference) against every row
+// already on the account — a credit the statement has already recorded, or a
+// second alert for the same transfer (e.g. a "received money" alert plus a
+// Payment Advice), is skipped instead of double-counted.
+export function dedupeAlerts(
+  valid: ValidTxn[],
+  existing: { txn_date: string; amount: number; external_ref?: string | null }[]
+): { toInsert: ValidTxn[]; duplicates: ValidTxn[] } {
+  const key = (d: string, a: number) => `${d}|${Number(a).toFixed(2)}`;
+  const seen = new Set(existing.map((e) => key(e.txn_date, e.amount)));
+  const refs = new Set(existing.map((e) => e.external_ref).filter(Boolean));
+  const toInsert: ValidTxn[] = [];
+  const duplicates: ValidTxn[] = [];
+  for (const v of valid) {
+    const k = key(v.date, v.amount);
+    if (seen.has(k) || (v.ref && refs.has(v.ref))) {
+      duplicates.push(v);
+      continue;
+    }
+    seen.add(k);
+    if (v.ref) refs.add(v.ref);
+    toInsert.push(v);
+  }
   return { toInsert, duplicates };
 }
 
@@ -434,10 +479,16 @@ export async function resolveOwnerId(supabase: SupabaseClient): Promise<string> 
 async function fetchExisting(supabase: SupabaseClient, accountId: string) {
   const { data, error } = await supabase
     .from("transactions")
-    .select("txn_date, amount, description")
+    .select("txn_date, amount, description, source, external_ref")
     .eq("account_id", accountId);
   if (error) throw new Error(`Could not read existing transactions: ${error.message}`);
-  return (data ?? []) as { txn_date: string; amount: number; description: string }[];
+  return (data ?? []) as {
+    txn_date: string;
+    amount: number;
+    description: string;
+    source: string | null;
+    external_ref: string | null;
+  }[];
 }
 
 // ------------------------------------------------------------------
@@ -446,7 +497,8 @@ async function fetchExisting(supabase: SupabaseClient, accountId: string) {
 async function main() {
   loadDotEnvLocal();
 
-  const { file, account, dryRun, password } = parseArgs(process.argv);
+  const { file, account, dryRun, alerts, password: pwArg } = parseArgs(process.argv);
+  const password = pwArg ?? process.env.STATEMENT_PDF_PASSWORD;
   if (!file || !account) {
     console.error(USAGE);
     process.exit(1);
@@ -466,6 +518,10 @@ async function main() {
   }
 
   const kind = detectKind(file);
+  if (alerts && kind !== "json") {
+    console.error("ERROR: --alerts expects a .json file of alert transactions.");
+    process.exit(1);
+  }
   const raw = await loadTransactions(file, kind, password);
   const { valid, invalid, needsReview } = validateAndCategorize(raw);
 
@@ -473,7 +529,11 @@ async function main() {
   const accountRow = await resolveAccount(supabase, account);
   const ownerId = await resolveOwnerId(supabase);
   const existing = await fetchExisting(supabase, accountRow.id);
-  const { toInsert, duplicates } = dedupeAgainstExisting(valid, existing);
+  // A statement is authoritative, so its rows are checked only against other
+  // non-alert rows; the alert rows it covers are removed after it lands.
+  const { toInsert, duplicates } = alerts
+    ? dedupeAlerts(valid, existing)
+    : dedupeAgainstExisting(valid, existing.filter((e) => e.source !== "alert"));
 
   const period = statementPeriod(valid.length ? valid : raw as any);
   const totalIn = valid.filter((t) => t.amount > 0).reduce((s, t) => s + t.amount, 0);
@@ -481,8 +541,25 @@ async function main() {
 
   let statementId: string | null = null;
   let inserted = 0;
+  let alertsReplaced = 0;
 
-  if (!dryRun) {
+  if (!dryRun && alerts) {
+    if (toInsert.length > 0) {
+      const rows = toInsert.map((t) => ({
+        owner_id: ownerId,
+        account_id: accountRow.id,
+        txn_date: t.date,
+        description: t.description,
+        category: t.category,
+        amount: t.amount,
+        source: "alert",
+        external_ref: t.ref ?? null,
+      }));
+      const { error: te } = await supabase.from("transactions").insert(rows);
+      if (te) throw new Error(`Insert failed: ${te.message}`);
+      inserted = toInsert.length;
+    }
+  } else if (!dryRun) {
     if (toInsert.length > 0) {
       const { data: stmt, error: se } = await supabase
         .from("statements")
@@ -532,10 +609,25 @@ async function main() {
         txn_count: 0,
       });
     }
+
+    // The statement now holds the real record of these dates, so drop the
+    // provisional alert rows it covers (they'd otherwise be counted twice).
+    if (valid.length > 0 && period.start && period.end) {
+      const { data: gone, error: de } = await supabase
+        .from("transactions")
+        .delete()
+        .eq("account_id", accountRow.id)
+        .eq("source", "alert")
+        .gte("txn_date", period.start)
+        .lte("txn_date", period.end)
+        .select("id");
+      if (de) throw new Error(`Could not remove superseded alert rows: ${de.message}`);
+      alertsReplaced = gone?.length ?? 0;
+    }
   }
 
   // ---------------- Summary ----------------
-  console.log("=== Statement ingestion summary ===");
+  console.log(alerts ? "=== Alert ingestion summary ===" : "=== Statement ingestion summary ===");
   console.log(
     `Account:        ${accountRow.name}${
       accountRow.account_ref ? ` (••${accountRow.account_ref})` : ""
@@ -561,6 +653,7 @@ async function main() {
     console.log(`  - row ${inv.index}: ${inv.reason}`);
   }
   console.log(`Statement totals: ${money(totalIn)} in / ${money(totalOut)} out`);
+  if (!alerts) console.log(`Provisional alert rows replaced by this statement: ${alertsReplaced}`);
   if (dryRun) console.log("\nDry run — nothing was written to Supabase.");
 
   console.log(
@@ -568,6 +661,7 @@ async function main() {
       JSON.stringify({
         ok: true,
         dryRun,
+        mode: alerts ? "alerts" : "statement",
         account: { id: accountRow.id, name: accountRow.name },
         file: path.basename(file),
         kind,
@@ -582,6 +676,7 @@ async function main() {
         totalIn,
         totalOut,
         statementId,
+        alertsReplaced,
       })
   );
 }

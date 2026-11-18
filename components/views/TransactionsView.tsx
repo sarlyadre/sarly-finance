@@ -492,6 +492,7 @@ export function TransactionsView({
                         </td>
                     <td className="px-4 py-3 text-sm font-medium">
                       {t.description}
+                      {t.source === "alert" && <ProvisionalTag />}
                     </td>
                     <td className="px-4 py-3">
                       <CategorySelect
@@ -572,6 +573,7 @@ export function TransactionsView({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">
                       {t.description}
+                      {t.source === "alert" && <ProvisionalTag />}
                     </p>
                     <div className="mt-1 flex items-center gap-2">
                       <CategorySelect
@@ -759,6 +761,19 @@ function RowBtn({
     >
       {children}
     </button>
+  );
+}
+
+// Rows from the daily bank alert-email sync; replaced once the month's
+// statement is imported.
+function ProvisionalTag() {
+  return (
+    <span
+      className="ml-1.5 inline-flex items-center rounded-full bg-tangerine/10 px-1.5 py-0.5 align-middle text-[10px] font-medium text-tangerine"
+      title="From a bank alert email — will be replaced by the statement"
+    >
+      Alert
+    </span>
   );
 }
 
