@@ -178,7 +178,9 @@ export function FlowChart({ daily }: { daily: Record<string, DailyFlow> }) {
               tickLine={false}
               tick={{ fill: "#b6bbc2", fontSize: 11 }}
               width={44}
-              tickFormatter={(v) => (v === 0 ? "0" : `${v / 1000}k`)}
+              tickFormatter={(v: number) =>
+                v === 0 ? "0" : v < 1000 ? String(Math.round(v)) : `${+(v / 1000).toFixed(1)}k`
+              }
             />
             <Tooltip cursor={{ fill: "rgba(147,194,62,0.06)" }} content={<FlowTooltip />} />
             {(
