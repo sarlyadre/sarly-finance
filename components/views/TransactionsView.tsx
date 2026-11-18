@@ -51,29 +51,36 @@ export function TransactionsView({
   const acctName = new Map(accounts.map((a) => [a.id, a.name]));
   const effCat = (t: Transaction) => overrides[t.id] ?? t.category ?? "Other";
 
-  // Redundant-data detection: group by date + amount + description.
+  // Redundant-data detection: the same account, date, amount and description
+  // arriving from more than one import (e.g. a statement uploaded twice).
+  // Identical lines from the SAME import are genuine repeat charges — two
+  // same-day RM 101 TNG reloads on one statement — and are never flagged.
+  // Scoped to the account filter, so it only ever flags rows you can see.
   const dupKey = (t: Transaction) =>
-    `${t.txn_date}|${Number(t.amount).toFixed(2)}|${(t.description || "")
+    `${t.account_id}|${t.txn_date}|${Number(t.amount).toFixed(2)}|${(t.description || "")
       .trim()
       .toLowerCase()}`;
+  const origin = (t: Transaction) => t.statement_id ?? t.source ?? "manual";
   const { dupIds, redundantIds } = useMemo(() => {
     const groups = new Map<string, Transaction[]>();
     for (const t of transactions) {
+      if (acct !== "all" && t.account_id !== acct) continue;
       const k = dupKey(t);
       (groups.get(k) ?? groups.set(k, []).get(k)!).push(t);
     }
     const dup = new Set<string>();
     const redundant = new Set<string>();
     groups.forEach((list) => {
-      if (list.length > 1) {
-        list.forEach((t, i) => {
-          dup.add(t.id);
-          if (i > 0) redundant.add(t.id); // keep the first, flag the rest
-        });
-      }
+      const origins = Array.from(new Set(list.map(origin)));
+      if (origins.length < 2) return; // all from one import: real repeats
+      list.forEach((t) => {
+        dup.add(t.id);
+        // keep the first import's copies, flag every other import's
+        if (origin(t) !== origins[0]) redundant.add(t.id);
+      });
     });
     return { dupIds: dup, redundantIds: redundant };
-  }, [transactions]);
+  }, [transactions, acct]);
 
   const filtered = useMemo(() => {
     return transactions.filter((t) => {
@@ -87,6 +94,13 @@ export function TransactionsView({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactions, q, cat, acct, holder, overrides, dupOnly, dupIds]);
+
+  // Bulk actions only ever touch selected rows that are on screen, so a
+  // selection made under other filters can't delete rows you can't see.
+  const visibleSel = useMemo(
+    () => filtered.filter((t) => sel.has(t.id)).map((t) => t.id),
+    [filtered, sel]
+  );
 
   // Show the cardholder filter only when there are card-tagged transactions here.
   const hasCardholders = useMemo(
@@ -125,7 +139,9 @@ export function TransactionsView({
 
   function findDuplicates() {
     if (redundantIds.size === 0) {
-      alert("No redundant transactions found — nothing is duplicated.");
+      alert(
+        "No duplicate imports found. Identical lines from the same statement are separate charges, so they're kept."
+      );
       return;
     }
     setDupOnly(true);
@@ -135,7 +151,7 @@ export function TransactionsView({
   }
 
   async function deleteSelected() {
-    const ids = Array.from(sel);
+    const ids = visibleSel;
     if (ids.length === 0) return;
     if (
       !confirm(
@@ -173,7 +189,7 @@ export function TransactionsView({
       allFilteredSelected ? new Set() : new Set(filtered.map((t) => t.id))
     );
   async function applyBulk() {
-    await setCategory(Array.from(sel), bulkCat);
+    await setCategory(visibleSel, bulkCat);
     setSel(new Set());
   }
 
@@ -381,9 +397,9 @@ export function TransactionsView({
         )}
 
         {/* Bulk categorise bar */}
-        {sel.size > 0 && (
+        {visibleSel.length > 0 && (
           <div className="flex flex-wrap items-center gap-3 border-b border-line bg-brand-50/60 px-4 py-3">
-            <span className="text-sm font-semibold">{sel.size} selected</span>
+            <span className="text-sm font-semibold">{visibleSel.length} selected</span>
             <span className="text-xs text-ink-muted">Set category to</span>
             <select
               value={bulkCat}
@@ -397,7 +413,7 @@ export function TransactionsView({
               ))}
             </select>
             <button onClick={applyBulk} className="btn-brand px-3 py-1.5 text-sm">
-              Apply to {sel.size}
+              Apply to {visibleSel.length}
             </button>
             <button
               onClick={deleteSelected}
@@ -409,7 +425,7 @@ export function TransactionsView({
               ) : (
                 <Trash2 className="h-4 w-4" />
               )}
-              Delete {sel.size}
+              Delete {visibleSel.length}
             </button>
             <button
               onClick={() => setSel(new Set())}
