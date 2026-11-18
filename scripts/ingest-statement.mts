@@ -50,7 +50,6 @@ import {
   detectColumns,
   fromCSV,
   fromText,
-  markDuplicates,
   statementPeriod,
   guessCategory,
   type ParsedTxn,
@@ -380,31 +379,38 @@ export function validateAndCategorize(rows: (RawTxn & { cardholder?: string | nu
 }
 
 // ------------------------------------------------------------------
-// Duplicate detection — reuses lib/parse/statement.ts's markDuplicates
-// exactly (same date+amount+description key the in-app importer uses),
-// scoped to just this account's existing rows (tighter than the in-app
-// importer's whole-history check, and still correct for re-running the
-// same statement or overlapping with an already-synced Wise period).
+// Duplicate detection — same date+amount+description key as the in-app
+// importer's markDuplicates, scoped to this account's existing rows, but
+// counted: every line of a statement is a real transaction, so two
+// identical charges on one statement (two same-day fuel top-ups) are both
+// kept, and a row is only a duplicate while the account already holds an
+// unmatched copy of it. Re-running a statement therefore inserts nothing,
+// and a partly-imported one gets only its missing rows.
 // ------------------------------------------------------------------
+const dupKey = (d: string, a: number, desc: string) =>
+  `${d}|${Number(a).toFixed(2)}|${(desc || "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 48)}`;
+
 export function dedupeAgainstExisting(
   valid: ValidTxn[],
   existing: { txn_date: string; amount: number; description: string }[]
 ): { toInsert: ValidTxn[]; duplicates: ValidTxn[] } {
-  const shaped: ParsedTxn[] = valid.map((v, i) => ({
-    id: `ingest-${i}`,
-    date: v.date,
-    description: v.description,
-    amount: v.amount,
-    category: v.category,
-    include: true,
-    duplicate: false,
-  }));
-  const flagged = markDuplicates(shaped, existing);
+  const remaining = new Map<string, number>();
+  for (const e of existing) {
+    const k = dupKey(e.txn_date, e.amount, e.description);
+    remaining.set(k, (remaining.get(k) ?? 0) + 1);
+  }
   const toInsert: ValidTxn[] = [];
   const duplicates: ValidTxn[] = [];
-  flagged.forEach((f, i) => {
-    (f.duplicate ? duplicates : toInsert).push(valid[i]);
-  });
+  for (const v of valid) {
+    const k = dupKey(v.date, v.amount, v.description);
+    const left = remaining.get(k) ?? 0;
+    if (left > 0) {
+      remaining.set(k, left - 1);
+      duplicates.push(v);
+    } else {
+      toInsert.push(v);
+    }
+  }
   return { toInsert, duplicates };
 }
 
@@ -608,23 +614,43 @@ async function main() {
     }
   } else if (!dryRun) {
     if (toInsert.length > 0) {
-      const { data: stmt, error: se } = await supabase
+      // Re-running the same statement tops up its existing record rather
+      // than adding a second entry to the import history.
+      const { data: prior } = await supabase
         .from("statements")
-        .insert({
-          owner_id: ownerId,
-          account_id: accountRow.id,
-          filename: path.basename(file),
-          source: kind === "json" ? "other" : kind,
-          period_start: period.start,
-          period_end: period.end,
-          txn_count: toInsert.length,
-        })
-        .select("id")
-        .single();
-      if (se || !stmt) {
-        throw new Error(`Could not create statement record: ${se?.message ?? "unknown error"}`);
+        .select("id, txn_count")
+        .eq("account_id", accountRow.id)
+        .eq("filename", path.basename(file))
+        .eq("period_start", period.start)
+        .eq("period_end", period.end)
+        .limit(1);
+      let createdStatement = false;
+      if (prior && prior.length) {
+        statementId = prior[0].id;
+        await supabase
+          .from("statements")
+          .update({ txn_count: (prior[0].txn_count ?? 0) + toInsert.length })
+          .eq("id", statementId);
+      } else {
+        const { data: stmt, error: se } = await supabase
+          .from("statements")
+          .insert({
+            owner_id: ownerId,
+            account_id: accountRow.id,
+            filename: path.basename(file),
+            source: kind === "json" ? "other" : kind,
+            period_start: period.start,
+            period_end: period.end,
+            txn_count: toInsert.length,
+          })
+          .select("id")
+          .single();
+        if (se || !stmt) {
+          throw new Error(`Could not create statement record: ${se?.message ?? "unknown error"}`);
+        }
+        statementId = stmt.id;
+        createdStatement = true;
       }
-      statementId = stmt.id;
 
       const rows = toInsert.map((t) => ({
         owner_id: ownerId,
@@ -640,7 +666,7 @@ async function main() {
       }));
       const { error: te } = await supabase.from("transactions").insert(rows);
       if (te) {
-        await supabase.from("statements").delete().eq("id", statementId);
+        if (createdStatement) await supabase.from("statements").delete().eq("id", statementId);
         throw new Error(`Insert failed: ${te.message}`);
       }
       inserted = toInsert.length;
