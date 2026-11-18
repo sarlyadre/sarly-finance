@@ -180,6 +180,8 @@ export type RawTxn = {
   amount: number;
   category?: string | null;
   ref?: string | null; // alert reference (e.g. Payment Advice no.), stored as external_ref
+  card?: string | null; // last 4 of the card (combined credit-card statements)
+  product?: string | null; // card product section the row came from
 };
 
 export function loadJsonTransactions(file: string): RawTxn[] {
@@ -202,24 +204,33 @@ async function extractPdfLines(
   const pdfjs: any = await import(
     "file://" + require.resolve("pdfjs-dist/legacy/build/pdf.mjs")
   );
-  const data = new Uint8Array(fs.readFileSync(filePath));
-  let doc;
-  try {
-    doc = await pdfjs.getDocument({
-      data,
+  const bytes = fs.readFileSync(filePath);
+  // Open without a password first: statements downloaded from Maybank2u are
+  // encrypted with an empty open-password and reject any other password, so
+  // the e-statement password is only tried when the file actually asks.
+  const open = (pw?: string) =>
+    pdfjs.getDocument({
+      data: new Uint8Array(bytes),
       isEvalSupported: false,
       useSystemFonts: true,
-      password,
+      password: pw,
     }).promise;
+  let doc;
+  try {
+    doc = await open();
   } catch (e: any) {
-    if (e?.name === "PasswordException") {
-      throw new Error(
-        e.code === 2
-          ? "That password was incorrect. Re-run with --password <correct-password>."
-          : "This PDF is password-protected. Re-run with --password <password>."
-      );
+    if (e?.name !== "PasswordException") throw e;
+    if (!password) {
+      throw new Error("This PDF is password-protected. Re-run with --password <password>.");
     }
-    throw e;
+    try {
+      doc = await open(password);
+    } catch (e2: any) {
+      if (e2?.name === "PasswordException") {
+        throw new Error("That password was incorrect. Re-run with --password <correct-password>.");
+      }
+      throw e2;
+    }
   }
   let text = "";
   for (let p = 1; p <= doc.numPages; p++) {
@@ -253,7 +264,32 @@ function fromParsedTxn(rows: ParsedTxn[]): RawTxn[] {
     description: r.description,
     amount: r.amount,
     category: r.category,
+    card: r.card ?? null,
+    product: r.product ?? null,
   }));
+}
+
+// A Maybank card statement covers every card on the account — the primary
+// cards of each product plus their supplementary cards — so keep only the
+// rows that belong to `accountRef`, the same rule as the Import statements
+// page: the card whose last 4 is the account's ref is Primary, and other
+// cards in that card's product section are its Supplementary cards.
+export function selectCardRows(
+  rows: RawTxn[],
+  accountRef: string | null
+): { rows: (RawTxn & { cardholder: string | null })[]; otherCards: number } {
+  if (!rows.some((r) => r.card)) return { rows: rows.map((r) => ({ ...r, cardholder: null })), otherCards: 0 };
+  const products = new Set(
+    rows.filter((r) => r.card && r.card === accountRef && r.product).map((r) => r.product!)
+  );
+  const kept: (RawTxn & { cardholder: string | null })[] = [];
+  let otherCards = 0;
+  for (const r of rows) {
+    if (r.card && r.card === accountRef) kept.push({ ...r, cardholder: "Primary" });
+    else if (r.card && r.product && products.has(r.product)) kept.push({ ...r, cardholder: "Supplementary" });
+    else otherCards++;
+  }
+  return { rows: kept, otherCards };
 }
 
 export async function loadTransactions(
@@ -295,10 +331,12 @@ export type ValidTxn = {
   amount: number;
   category: string;
   ref?: string | null;
+  card?: string | null;
+  cardholder?: string | null;
 };
 export type InvalidTxn = { index: number; reason: string; raw: unknown };
 
-export function validateAndCategorize(rows: RawTxn[]): {
+export function validateAndCategorize(rows: (RawTxn & { cardholder?: string | null })[]): {
   valid: ValidTxn[];
   invalid: InvalidTxn[];
   needsReview: ValidTxn[];
@@ -325,7 +363,15 @@ export function validateAndCategorize(rows: RawTxn[]): {
     }
     const category = (r?.category && String(r.category).trim()) || guessCategory(description);
     const ref = r?.ref ? String(r.ref).trim() || null : null;
-    const txn: ValidTxn = { date, description, amount, category, ref };
+    const txn: ValidTxn = {
+      date,
+      description,
+      amount,
+      category,
+      ref,
+      card: r?.card ?? null,
+      cardholder: r?.cardholder ?? null,
+    };
     valid.push(txn);
     if (category === REVIEW_CATEGORY) needsReview.push(txn);
   });
@@ -522,11 +568,12 @@ async function main() {
     console.error("ERROR: --alerts expects a .json file of alert transactions.");
     process.exit(1);
   }
-  const raw = await loadTransactions(file, kind, password);
-  const { valid, invalid, needsReview } = validateAndCategorize(raw);
+  const loaded = await loadTransactions(file, kind, password);
 
   const supabase = createAdminClient();
   const accountRow = await resolveAccount(supabase, account);
+  const { rows: raw, otherCards } = selectCardRows(loaded, accountRow.account_ref);
+  const { valid, invalid, needsReview } = validateAndCategorize(raw);
   const ownerId = await resolveOwnerId(supabase);
   const existing = await fetchExisting(supabase, accountRow.id);
   // A statement is authoritative, so its rows are checked only against other
@@ -588,6 +635,8 @@ async function main() {
         amount: t.amount,
         source: "ingest",
         statement_id: statementId,
+        card: t.card ?? null,
+        cardholder: t.cardholder ?? null,
       }));
       const { error: te } = await supabase.from("transactions").insert(rows);
       if (te) {
@@ -640,6 +689,7 @@ async function main() {
     }`
   );
   console.log(`Parsed rows:    ${raw.length}`);
+  if (otherCards) console.log(`Other cards' rows (left for their own account): ${otherCards}`);
   console.log(`${dryRun ? "Would insert" : "Inserted"}:     ${dryRun ? toInsert.length : inserted}`);
   console.log(`Duplicates (skipped, already in DB): ${duplicates.length}`);
   console.log(
@@ -668,6 +718,7 @@ async function main() {
         periodStart: period.start,
         periodEnd: period.end,
         parsed: raw.length,
+        otherCards,
         inserted: dryRun ? 0 : inserted,
         wouldInsert: toInsert.length,
         duplicates: duplicates.length,
